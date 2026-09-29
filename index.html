@@ -110,7 +110,7 @@
             </div>
 
             <div class="space-y-2">
-                <label class="text-xs text-slate-400">Gemini API Key (請貼上剛複製的 Key):</label>
+                <label class="text-xs text-slate-400">Gemini API Key (貼上以 AQ. 開頭的金鑰):</label>
                 <input type="password" id="apiKey" placeholder="貼上 API Key..." class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 focus:outline-none focus:border-pink-500">
             </div>
 
@@ -274,20 +274,21 @@
 
             try {
                 const base64Data = currentBase64Image.split(',')[1];
-                const promptText = "Extract VTuber schedule from this image. Output ONLY a valid JSON array of objects with keys: 'name', 'group' (default '箱外/個人勢'), 'type' ('歌枠','雜談','遊戲','重大發表','聯動'), 'date' (YYYY-MM-DD), 'time' (HH:MM, e.g. '20:00'), 'title'. No markdown formatting, just raw JSON array.";
+                const promptText = "Extract VTuber schedule from this image. Return JSON format array with objects: 'name', 'group' (default '箱外/個人勢'), 'type' ('歌枠','雜談','遊戲','重大發表','聯動'), 'date' (YYYY-MM-DD), 'time' (HH:MM), 'title'. Output ONLY JSON format.";
 
-                // Multi-endpoint fallback list for Gemini 2.0 & 1.5
-                const endpoints = [
-                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`
+                // Fallback list to support multiple Gemini API endpoints
+                const candidateEndpoints = [
+                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`,
+                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=${apiKey}`
                 ];
 
                 let data = null;
-                let lastError = null;
+                let lastErr = null;
 
-                for (let url of endpoints) {
+                for (let endpoint of candidateEndpoints) {
                     try {
-                        let response = await fetch(url, {
+                        const response = await fetch(endpoint, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
@@ -301,215 +302,20 @@
                         });
 
                         const resJson = await response.json();
-                        if (response.ok && !resJson.error) {
+                        if (response.ok && resJson.candidates) {
                             data = resJson;
                             break;
                         } else {
-                            lastError = resJson.error?.message || 'HTTP ' + response.status;
+                            lastErr = resJson.error?.message || `HTTP ${response.status}`;
                         }
-                    } catch (err) {
-                        lastError = err.message;
+                    } catch (e) {
+                        lastErr = e.message;
                     }
                 }
 
                 if (!data) {
-                    throw new Error(lastError || '無法連線至 Gemini API');
+                    throw new Error(lastErr || '所有 Gemini 模型端點嘗試皆失敗');
                 }
 
                 const rawText = data.candidates[0].content.parts[0].text;
-                const cleanJsonStr = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
-                const jsonMatch = cleanJsonStr.match(/\[.*\]/s);
-
-                if (jsonMatch) {
-                    const parsedEvents = JSON.parse(jsonMatch[0]);
-                    parsedEvents.forEach(e => {
-                        events.push({
-                            id: Date.now() + Math.random(),
-                            name: e.name || 'VTuber',
-                            group: e.group || '箱外/個人勢',
-                            type: e.type || '雜談',
-                            date: e.date || '2026-09-30',
-                            time: e.time || '20:00',
-                            title: e.title || '直播節目',
-                            link: '#'
-                        });
-                    });
-                    saveAndRender();
-                    alert(`🎉 成功辨識並匯入 ${parsedEvents.length} 筆行程！`);
-                } else {
-                    alert('辨識完成，但未能解析出結構資料，請再試一張圖片。');
-                }
-            } catch (err) {
-                console.error(err);
-                alert(`API 解析失敗！錯誤原因：${err.message}\n請確認 API Key 是否複製完整！`);
-            } finally {
-                btnText.innerText = '開始辨識行程';
-                toggleModal('uploadModal');
-                clearImagePreview();
-            }
-        }
-
-        function loadSampleData() {
-            events = [
-                { id: 1, name: '稀有礦物', group: '子午計畫', type: '歌枠', date: '2026-09-28', time: '20:00', title: '【歌枠】週初開唱歌線狂歡！', link: '#' },
-                { id: 2, name: '汐Seki', group: '子午計畫', type: '雜談', date: '2026-09-28', time: '22:00', title: '【雜談】關於最近的重大企劃...', link: '#' },
-                { id: 3, name: '響Hibiki', group: '子午計畫', type: '遊戲', date: '2026-09-29', time: '21:00', title: '【Minecraft】新服建設大作戰', link: '#' },
-                { id: 4, name: '個人勢 VTuber', group: '箱外/個人勢', type: '重大發表', date: '2026-10-01', time: '19:30', title: '【重大發表】新衣裝公開預告！', link: '#' }
-            ];
-            saveAndRender();
-        }
-
-        function toggleModal(id) {
-            const modal = document.getElementById(id);
-            modal.classList.toggle('hidden');
-        }
-
-        function filterGroup(groupName) {
-            activeGroup = groupName;
-            document.querySelectorAll('.group-btn').forEach(btn => {
-                if (btn.innerText === groupName || (groupName === '全部' && btn.innerText.includes('全部'))) {
-                    btn.className = "group-btn active px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap bg-pink-600 text-white";
-                } else {
-                    btn.className = "group-btn px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap bg-slate-800 text-slate-300 hover:bg-slate-700";
-                }
-            });
-            renderTimeline();
-        }
-
-        function saveEvent(e) {
-            e.preventDefault();
-            const newEvent = {
-                id: Date.now(),
-                name: document.getElementById('vtuberName').value,
-                group: document.getElementById('vtuberGroup').value,
-                type: document.getElementById('eventType').value,
-                date: document.getElementById('eventDate').value,
-                time: document.getElementById('eventTime').value,
-                title: document.getElementById('eventTitle').value,
-                link: document.getElementById('eventLink').value || '#'
-            };
-            events.push(newEvent);
-            saveAndRender();
-            toggleModal('addEventModal');
-            document.getElementById('addEventForm').reset();
-        }
-
-        function deleteEvent(id) {
-            events = events.filter(e => e.id !== id);
-            saveAndRender();
-        }
-
-        function saveAndRender() {
-            localStorage.setItem('vtuber_events', JSON.stringify(events));
-            renderTimeline();
-        }
-
-        function renderTimeline() {
-            const container = document.getElementById('timelineContainer');
-            const selectedMonth = document.getElementById('monthPicker').value;
-
-            const filtered = events.filter(e => {
-                const matchMonth = e.date.startsWith(selectedMonth);
-                const matchGroup = activeGroup === '全部' || e.group === activeGroup;
-                return matchMonth && matchGroup;
-            });
-
-            if (filtered.length === 0) {
-                container.innerHTML = `
-                    <div class="glass-card p-10 rounded-2xl text-center space-y-3">
-                        <i data-lucide="calendar-x" class="w-12 h-12 text-slate-500 mx-auto"></i>
-                        <p class="text-sm text-slate-400">目前月份 (${selectedMonth}) 沒有任何節目行程</p>
-                        <button onclick="loadSampleData()" class="px-4 py-2 bg-pink-600 text-xs font-semibold rounded-lg hover:bg-pink-500 transition">載入範例行程</button>
-                    </div>
-                `;
-                lucide.createIcons();
-                return;
-            }
-
-            const groupedByDate = {};
-            filtered.sort((a,b) => (a.date + a.time).localeCompare(b.date + b.time)).forEach(e => {
-                if (!groupedByDate[e.date]) groupedByDate[e.date] = [];
-                groupedByDate[e.date].push(e);
-            });
-
-            let html = '';
-            for (const [date, dayEvents] of Object.entries(groupedByDate)) {
-                const dateObj = new Date(date);
-                const dayOfWeek = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'][dateObj.getDay()];
-
-                html += `
-                    <div class="space-y-3">
-                        <div class="flex items-center space-x-2 border-b border-slate-800 pb-2">
-                            <span class="text-sm font-bold text-pink-400">${date}</span>
-                            <span class="text-xs text-slate-400">(${dayOfWeek})</span>
-                        </div>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                `;
-
-                dayEvents.forEach(e => {
-                    const badgeColors = {
-                        '歌枠': 'bg-pink-500/20 text-pink-300 border-pink-500/30',
-                        '雜談': 'bg-blue-500/20 text-blue-300 border-blue-500/30',
-                        '遊戲': 'bg-purple-500/20 text-purple-300 border-purple-500/30',
-                        '重大發表': 'bg-red-500/20 text-red-300 border-red-500/30',
-                        '聯動': 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-                    };
-
-                    html += `
-                        <div class="glass-card p-3.5 rounded-xl flex flex-col justify-between space-y-2 hover:border-slate-700 transition relative group">
-                            <div class="flex items-start justify-between">
-                                <div class="flex items-center space-x-2">
-                                    <div class="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center font-bold text-xs text-pink-400">
-                                        ${e.name.substring(0, 1)}
-                                    </div>
-                                    <div>
-                                        <div class="font-semibold text-xs text-slate-200">${e.name}</div>
-                                        <div class="text-[10px] text-slate-400">${e.group}</div>
-                                    </div>
-                                </div>
-                                <span class="px-2 py-0.5 rounded text-[10px] border ${badgeColors[e.type] || 'bg-slate-800 text-slate-300'}">
-                                    ${e.type}
-                                </span>
-                            </div>
-
-                            <div class="text-xs font-medium text-slate-100 line-clamp-2">
-                                ${e.title}
-                            </div>
-
-                            <div class="flex items-center justify-between pt-2 border-t border-slate-800/80 text-[11px] text-slate-400">
-                                <div class="flex items-center space-x-1">
-                                    <i data-lucide="clock" class="w-3.5 h-3.5 text-slate-400"></i>
-                                    <span>${e.time}</span>
-                                </div>
-                                <div class="flex items-center space-x-2">
-                                    <button onclick="deleteEvent(${e.id})" class="text-slate-500 hover:text-red-400 transition">
-                                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
-                                    </button>
-                                    <a href="${e.link}" target="_blank" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded flex items-center space-x-1">
-                                        <span>開啟直播</span>
-                                        <i data-lucide="external-link" class="w-3 h-3"></i>
-                                    </a>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                });
-
-                html += `
-                        </div>
-                    </div>
-                `;
-            }
-
-            container.innerHTML = html;
-            lucide.createIcons();
-        }
-
-        document.addEventListener("DOMContentLoaded", () => {
-            lucide.createIcons();
-            if (events.length === 0) loadSampleData();
-            else renderTimeline();
-        });
-    </script>
-</body>
-</html>
+                const cleanJsonStr = rawText.replace(/```json/g, '').replace(/
