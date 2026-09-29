@@ -79,7 +79,7 @@
 
         <!-- Timeline Section -->
         <section id="timelineContainer" class="space-y-6">
-            <!-- Dynamic Content Will Be Rendered Here -->
+            <!-- Dynamic Content -->
         </section>
 
     </main>
@@ -90,30 +90,42 @@
             <div class="flex justify-between items-center border-b border-slate-800 pb-3">
                 <h3 class="font-bold text-base flex items-center space-x-2">
                     <i data-lucide="image" class="w-5 h-5 text-pink-400"></i>
-                    <span>上傳 VTuber 週表辨識</span>
+                    <span>上傳 VTuber 週表圖片</span>
                 </h3>
                 <button onclick="toggleModal('uploadModal')" class="text-slate-400 hover:text-white">
                     <i data-lucide="x" class="w-5 h-5"></i>
                 </button>
             </div>
 
-            <div class="border-2 border-dashed border-slate-700 hover:border-pink-500/50 rounded-xl p-6 text-center space-y-2 transition cursor-pointer" onclick="document.getElementById('fileInput').click()">
-                <i data-lucide="upload-cloud" class="w-10 h-10 text-slate-400 mx-auto"></i>
-                <p class="text-xs text-slate-300">點擊上傳或把週表圖片拖曳至此處</p>
-                <p class="text-[10px] text-slate-500">支援 JPG / PNG / WEBP 格式</p>
-                <input type="file" id="fileInput" accept="image/*" multiple class="hidden" onchange="handleFileUpload(event)">
+            <!-- Upload / Paste Drop Area -->
+            <div id="dropZone" onclick="document.getElementById('fileInput').click()" class="border-2 border-dashed border-slate-700 hover:border-pink-500 rounded-xl p-6 text-center space-y-2 transition cursor-pointer bg-slate-900/40">
+                <i data-lucide="upload-cloud" class="w-10 h-10 text-pink-400 mx-auto"></i>
+                <p class="text-xs text-slate-200 font-medium">點擊選擇圖片、拖曳圖片至此，或按 <kbd class="px-1.5 py-0.5 bg-slate-800 border border-slate-600 rounded text-[10px]">Ctrl + V</kbd> 貼上圖片</p>
+                <p class="text-[10px] text-slate-400">支援 JPG / PNG / WEBP 格式</p>
+                <input type="file" id="fileInput" accept="image/*" class="hidden" onchange="handleFileSelect(event)">
+            </div>
+
+            <!-- Image Preview Box -->
+            <div id="previewContainer" class="hidden space-y-2">
+                <div class="text-xs text-slate-400 flex justify-between items-center">
+                    <span>已選擇的週表圖片：</span>
+                    <button onclick="clearImagePreview()" class="text-red-400 hover:underline text-[11px]">移除圖片</button>
+                </div>
+                <div class="relative max-h-48 overflow-hidden rounded-lg border border-slate-700 bg-slate-900">
+                    <img id="imagePreview" class="w-full object-contain max-h-48" src="" alt="預覽">
+                </div>
             </div>
 
             <div class="space-y-2">
-                <label class="text-xs text-slate-400">Gemini API Key (選填，啟用 AI 辨識):</label>
-                <input type="password" id="apiKey" placeholder="AIZASy..." class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-xs text-slate-200">
+                <label class="text-xs text-slate-400">Gemini API Key (選填，用於 AI 自動解析節目資訊):</label>
+                <input type="password" id="apiKey" placeholder="AIZASy..." class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 focus:outline-none focus:border-pink-500">
             </div>
 
             <div class="flex justify-end space-x-2 pt-2">
                 <button onclick="toggleModal('uploadModal')" class="px-4 py-2 text-xs rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300">取消</button>
-                <button onclick="processAIUpload()" class="px-4 py-2 text-xs rounded-lg bg-pink-600 hover:bg-pink-500 font-semibold flex items-center space-x-1">
+                <button id="processBtn" onclick="processAIUpload()" class="px-4 py-2 text-xs rounded-lg bg-pink-600 hover:bg-pink-500 font-semibold flex items-center space-x-1">
                     <i data-lucide="wand2" class="w-3.5 h-3.5"></i>
-                    <span>開始辨識行程</span>
+                    <span id="btnText">開始辨識行程</span>
                 </button>
             </div>
         </div>
@@ -185,8 +197,136 @@
     <script>
         let events = JSON.parse(localStorage.getItem('vtuber_events') || '[]');
         let activeGroup = '全部';
+        let currentBase64Image = null;
 
-        // Sample Data Initialization
+        // Clipboard Paste Listener (Ctrl+V)
+        document.addEventListener('paste', (e) => {
+            const items = e.clipboardData.items;
+            for (let item of items) {
+                if (item.type.indexOf('image') !== -1) {
+                    const file = item.getAsFile();
+                    processImageFile(file);
+                    // Automatically open modal if closed
+                    document.getElementById('uploadModal').classList.remove('hidden');
+                    break;
+                }
+            }
+        });
+
+        // Drag & Drop Listener
+        const dropZone = document.getElementById('dropZone');
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropZone?.addEventListener(eventName, preventDefaults, false);
+        });
+        function preventDefaults(e) { e.preventDefault(); e.stopPropagation(); }
+
+        dropZone?.addEventListener('drop', (e) => {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            if (files.length > 0) processImageFile(files[0]);
+        });
+
+        function handleFileSelect(e) {
+            const files = e.target.files;
+            if (files.length > 0) processImageFile(files[0]);
+        }
+
+        function processImageFile(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                currentBase64Image = e.target.result;
+                document.getElementById('imagePreview').src = currentBase64Image;
+                document.getElementById('previewContainer').classList.remove('hidden');
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function clearImagePreview() {
+            currentBase64Image = null;
+            document.getElementById('fileInput').value = '';
+            document.getElementById('previewContainer').classList.add('hidden');
+        }
+
+        async function processAIUpload() {
+            if (!currentBase64Image) {
+                alert('請先選擇、貼上或拖曳上傳一張週表圖片！');
+                return;
+            }
+
+            const apiKey = document.getElementById('apiKey').value.trim();
+            const btnText = document.getElementById('btnText');
+            btnText.innerText = '解析中...';
+
+            if (!apiKey) {
+                // Mock AI extraction if no API key provided
+                setTimeout(() => {
+                    events.push({
+                        id: Date.now(),
+                        name: '辨識結果-VTuber',
+                        group: '子午計畫',
+                        type: '歌枠',
+                        date: '2026-09-30',
+                        time: '21:00',
+                        title: '【辨識成功】上傳週表自動匯入之直播行程',
+                        link: '#'
+                    });
+                    saveAndRender();
+                    btnText.innerText = '開始辨識行程';
+                    toggleModal('uploadModal');
+                    clearImagePreview();
+                    alert('已成功讀取圖片並匯入行程！（未輸入 Gemini Key 故載入範例解析資料）');
+                }, 1000);
+                return;
+            }
+
+            try {
+                const base64Data = currentBase64Image.split(',')[1];
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{
+                            parts: [
+                                { text: "請解析這張 VTuber 週表圖片，擷取節目清單。請輸出 JSON 陣列格式，欄位包括：name (VTuber名稱), group (預設'子午計畫'或'箱外/個人勢'), type ('歌枠','雜談','遊戲','重大發表','聯動'), date (YYYY-MM-DD), time (HH:MM), title (直播標題)。請只返回純 JSON code block。" },
+                                { inline_data: { mime_type: "image/png", data: base64Data } }
+                            ]
+                        }]
+                    })
+                });
+
+                const data = await response.json();
+                const rawText = data.candidates[0].content.parts[0].text;
+                const jsonMatch = rawText.match(/\[.*\]/s);
+                
+                if (jsonMatch) {
+                    const parsedEvents = JSON.parse(jsonMatch[0]);
+                    parsedEvents.forEach(e => {
+                        events.push({
+                            id: Date.now() + Math.random(),
+                            name: e.name || 'VTuber',
+                            group: e.group || '箱外/個人勢',
+                            type: e.type || '雜談',
+                            date: e.date || '2026-09-30',
+                            time: e.time || '20:00',
+                            title: e.title || '直播節目',
+                            link: '#'
+                        });
+                    });
+                    saveAndRender();
+                    alert(`成功識別並加入 ${parsedEvents.length} 筆行程！`);
+                } else {
+                    alert('辨識完成，但未能解析出標準行程，請重新嘗試或手動新增。');
+                }
+            } catch (err) {
+                console.error(err);
+                alert('Gemini API 解析失敗，請檢查 Key 是否正確！');
+            } finally {
+                btnText.innerText = '開始辨識行程';
+                toggleModal('uploadModal');
+                clearImagePreview();
+            }
+        }
+
         function loadSampleData() {
             events = [
                 { id: 1, name: '稀有礦物', group: '子午計畫', type: '歌枠', date: '2026-09-28', time: '20:00', title: '【歌枠】週初開唱歌線狂歡！', link: '#' },
@@ -244,9 +384,8 @@
 
         function renderTimeline() {
             const container = document.getElementById('timelineContainer');
-            const selectedMonth = document.getElementById('monthPicker').value; // e.g., "2026-09"
+            const selectedMonth = document.getElementById('monthPicker').value;
 
-            // Filter events by month & group
             const filtered = events.filter(e => {
                 const matchMonth = e.date.startsWith(selectedMonth);
                 const matchGroup = activeGroup === '全部' || e.group === activeGroup;
@@ -265,7 +404,6 @@
                 return;
             }
 
-            // Group events by date
             const groupedByDate = {};
             filtered.sort((a,b) => (a.date + a.time).localeCompare(b.date + b.time)).forEach(e => {
                 if (!groupedByDate[e.date]) groupedByDate[e.date] = [];
@@ -345,10 +483,10 @@
             lucide.createIcons();
         }
 
-        // Initialize icons and render
         document.addEventListener("DOMContentLoaded", () => {
             lucide.createIcons();
-            renderTimeline();
+            if (events.length === 0) loadSampleData();
+            else renderTimeline();
         });
     </script>
 </body>
