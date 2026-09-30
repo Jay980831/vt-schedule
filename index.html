@@ -65,7 +65,7 @@
                 </div>
                 <button onclick="clearAllData()" class="text-xs text-red-400 hover:underline flex items-center space-x-1">
                     <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
-                    <span>清除目前行程</span>
+                    <span>清空所有行程</span>
                 </button>
             </div>
         </section>
@@ -111,7 +111,7 @@
 
             <div class="space-y-2">
                 <label class="text-xs text-slate-400">Gemini API Key (貼上 API 金鑰):</label>
-                <input type="password" id="apiKey" placeholder="貼上您的 API Key..." class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 focus:outline-none focus:border-pink-500">
+                <input type="password" id="apiKey" placeholder="請貼上您的 Gemini API Key..." class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 focus:outline-none focus:border-pink-500">
             </div>
 
             <div class="flex justify-end space-x-2 pt-2">
@@ -249,7 +249,7 @@
 
             const apiKey = document.getElementById('apiKey').value.trim();
             if (!apiKey) {
-                alert('請填寫 Gemini API Key 才能執行 AI 週表辨識！');
+                alert('請貼上有效的 Gemini API Key！');
                 return;
             }
 
@@ -258,28 +258,23 @@
 
             try {
                 const base64Data = currentBase64Image.split(',')[1];
-                const promptText = `你是專業的 VTuber 節目表解析助手。請詳細分析這張圖片，讀取圖片中每一天的所有直播行程。
-請務必只輸出標準 JSON 陣列格式（不要包含任何 MarkDown 標籤或說明文字），範例格式如下：
-[
-  {
-    "name": "VTuber名字(若無則填寫圖片中的主角名字)",
-    "group": "子午計畫", 
-    "type": "歌枠/雜談/遊戲/重大發表/聯動",
-    "date": "2026-09-30",
-    "time": "21:00",
-    "title": "直播標題內容"
-  }
-]
-注意：日期格式務必為 YYYY-MM-DD（年份預設 2026），時間為 HH:MM（24小時制）。`;
+                const promptText = `Extract VTuber stream schedule from the image into a JSON array. 
+Fields required for each item:
+- "name": Name of the VTuber
+- "group": Group name, default to "子午計畫" or "箱外/個人勢"
+- "type": Choose one from ("歌枠", "雜談", "遊戲", "重大發表", "聯動")
+- "date": Date in "YYYY-MM-DD" format (assume year 2026 if year not specified)
+- "time": Start time in "HH:MM" 24-hour format
+- "title": Stream title or description`;
 
                 const candidateModels = [
                     'gemini-2.5-flash',
                     'gemini-2.0-flash',
-                    'gemini-1.5-flash-latest'
+                    'gemini-1.5-flash'
                 ];
 
-                let data = null;
-                let lastErr = null;
+                let responseData = null;
+                let lastError = null;
 
                 for (let modelName of candidateModels) {
                     try {
@@ -287,8 +282,7 @@
                         const response = await fetch(url, {
                             method: 'POST',
                             headers: {
-                                'Content-Type': 'application/json',
-                                'x-goog-api-key': apiKey
+                                'Content-Type': 'application/json'
                             },
                             body: JSON.stringify({
                                 contents: [{
@@ -296,38 +290,33 @@
                                         { text: promptText },
                                         { inline_data: { mime_type: currentMimeType, data: base64Data } }
                                     ]
-                                }]
+                                }],
+                                generationConfig: {
+                                    response_mime_type: "application/json"
+                                }
                             })
                         });
 
                         const resJson = await response.json();
                         if (response.ok && resJson.candidates && resJson.candidates[0].content) {
-                            data = resJson;
+                            responseData = resJson;
                             break;
                         } else {
-                            lastErr = resJson.error?.message || `HTTP ${response.status}`;
+                            lastError = resJson.error?.message || `HTTP status ${response.status}`;
                         }
                     } catch (e) {
-                        lastErr = e.message;
+                        lastError = e.message;
                     }
                 }
 
-                if (!data) {
-                    throw new Error(lastErr || 'Gemini 連線失敗，請檢查 API Key！');
+                if (!responseData) {
+                    throw new Error(lastError || '無法連線至 Gemini API，請確認 API Key 是否正確');
                 }
 
-                const rawText = data.candidates[0].content.parts[0].text;
-                // 強制擷取 JSON 陣列
-                const cleanJsonStr = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
-                const jsonMatch = cleanJsonStr.match(/\[[\s\S]*\]/);
+                const rawText = responseData.candidates[0].content.parts[0].text;
+                const parsedEvents = JSON.parse(rawText);
 
-                if (jsonMatch) {
-                    const parsedEvents = JSON.parse(jsonMatch[0]);
-                    if (parsedEvents.length === 0) {
-                        alert('AI 已讀取圖片，但未能在圖片中找到明確的節目行程資訊。');
-                        return;
-                    }
-
+                if (Array.isArray(parsedEvents) && parsedEvents.length > 0) {
                     parsedEvents.forEach(e => {
                         events.push({
                             id: Date.now() + Math.random(),
@@ -336,7 +325,7 @@
                             type: e.type || '雜談',
                             date: e.date || '2026-09-30',
                             time: e.time || '20:00',
-                            title: e.title || '節目直播',
+                            title: e.title || '直播節目',
                             link: '#'
                         });
                     });
@@ -344,11 +333,12 @@
                     saveAndRender();
                     alert(`🎉 成功由圖片辨識並匯入 ${parsedEvents.length} 筆直播行程！`);
                 } else {
-                    alert('AI 辨識完成，但未能解析出結構文字，請試著換一張清晰的週表圖片。');
+                    alert('AI 完成辨識，但在圖片中未找到明確的直播行程。');
                 }
+
             } catch (err) {
-                console.error(err);
-                alert(`辨識失敗！錯誤訊息：${err.message}`);
+                console.error('API Error Details:', err);
+                alert(`辨識失敗！原因：${err.message}\n請確認金鑰是否正確，或換一張清晰的週表圖片。`);
             } finally {
                 btnText.innerText = '開始 AI 辨識週表';
                 toggleModal('uploadModal');
@@ -361,15 +351,6 @@
                 events = [];
                 saveAndRender();
             }
-        }
-
-        function loadSampleData() {
-            events = [
-                { id: 1, name: '稀有礦物', group: '子午計畫', type: '歌枠', date: '2026-09-28', time: '20:00', title: '【歌枠】週初開唱歌線狂歡！', link: '#' },
-                { id: 2, name: '汐Seki', group: '子午計畫', type: '雜談', date: '2026-09-28', time: '22:00', title: '【雜談】關於最近的重大企劃...', link: '#' },
-                { id: 3, name: '響Hibiki', group: '子午計畫', type: '遊戲', date: '2026-09-29', time: '21:00', title: '【Minecraft】新服建設大作戰', link: '#' }
-            ];
-            saveAndRender();
         }
 
         function toggleModal(id) {
@@ -431,8 +412,7 @@
                 container.innerHTML = `
                     <div class="glass-card p-10 rounded-2xl text-center space-y-3">
                         <i data-lucide="calendar-x" class="w-12 h-12 text-slate-500 mx-auto"></i>
-                        <p class="text-sm text-slate-400">目前月份 (${selectedMonth}) 沒有任何節目行程</p>
-                        <button onclick="loadSampleData()" class="px-4 py-2 bg-pink-600 text-xs font-semibold rounded-lg hover:bg-pink-500 transition">載入範例行程</button>
+                        <p class="text-sm text-slate-400">目前沒有任何節目行程，請點選右上角上傳週表或手動新增行程。</p>
                     </div>
                 `;
                 lucide.createIcons();
@@ -520,8 +500,7 @@
 
         document.addEventListener("DOMContentLoaded", () => {
             lucide.createIcons();
-            if (events.length === 0) loadSampleData();
-            else renderTimeline();
+            renderTimeline();
         });
     </script>
 </body>
