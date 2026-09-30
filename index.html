@@ -111,7 +111,7 @@
 
             <div class="space-y-2">
                 <label class="text-xs text-slate-400">Gemini API Key (貼上以 AQ. 開頭的金鑰):</label>
-                <input type="password" id="apiKey" placeholder="貼上 API Key..." class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 focus:outline-none focus:border-pink-500">
+                <input type="password" id="apiKey" placeholder="貼上 AQ. 開頭的金鑰..." class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 focus:outline-none focus:border-pink-500">
             </div>
 
             <div class="flex justify-end space-x-2 pt-2">
@@ -276,21 +276,25 @@
                 const base64Data = currentBase64Image.split(',')[1];
                 const promptText = "Extract VTuber schedule from this image. Return JSON format array with objects: 'name', 'group' (default '箱外/個人勢'), 'type' ('歌枠','雜談','遊戲','重大發表','聯動'), 'date' (YYYY-MM-DD), 'time' (HH:MM), 'title'. Output ONLY JSON format.";
 
-                // Fallback list to support multiple Gemini API endpoints
-                const candidateEndpoints = [
-                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`,
-                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=${apiKey}`
+                // 支援全新 AQ. Key 的 Header 傳送方式與模型版本
+                const modelNames = [
+                    'gemini-2.5-flash',
+                    'gemini-2.0-flash',
+                    'gemini-1.5-flash'
                 ];
 
                 let data = null;
                 let lastErr = null;
 
-                for (let endpoint of candidateEndpoints) {
+                for (let model of modelNames) {
                     try {
-                        const response = await fetch(endpoint, {
+                        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+                        const response = await fetch(url, {
                             method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'x-goog-api-key': apiKey
+                            },
                             body: JSON.stringify({
                                 contents: [{
                                     parts: [
@@ -314,7 +318,7 @@
                 }
 
                 if (!data) {
-                    throw new Error(lastErr || '所有 Gemini 模型端點嘗試皆失敗');
+                    throw new Error(lastErr || '無法使用該 Key 連線至 Gemini API');
                 }
 
                 const rawText = data.candidates[0].content.parts[0].text;
@@ -342,7 +346,7 @@
                 }
             } catch (err) {
                 console.error(err);
-                alert(`API 解析失敗！錯誤原因：${err.message}\n請確認 API Key 是否正確複製！`);
+                alert(`API 解析失敗！錯誤原因：${err.message}\n請確認 API Key 是否完整黏貼！`);
             } finally {
                 btnText.innerText = '開始辨識行程';
                 toggleModal('uploadModal');
