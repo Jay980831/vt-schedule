@@ -241,7 +241,7 @@
             document.getElementById('previewContainer').classList.add('hidden');
         }
 
-        async function processAIUpload() {
+async function processAIUpload() {
             if (!currentBase64Image) {
                 alert('請先選擇、貼上或拖曳上傳一張週表圖片！');
                 return;
@@ -254,9 +254,41 @@
             }
 
             const btnText = document.getElementById('btnText');
-            btnText.innerText = 'AI 辨識分析中...';
+            btnText.innerText = '尋找可用模型中...';
 
             try {
+                // 第一步：先向 Google 查詢該 API Key 支援的所有模型名稱
+                const listModelsUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
+                const listRes = await fetch(listModelsUrl);
+                const listData = await listRes.json();
+
+                if (!listRes.ok) {
+                    throw new Error(listData.error?.message || 'API Key 驗證失敗，請確認 Key 是否正確！');
+                }
+
+                // 篩選支援 generateContent 的模型，優先尋找 flash 系列
+                let selectedModel = '';
+                if (listData.models && listData.models.length > 0) {
+                    const validModels = listData.models.filter(m => 
+                        m.supportedGenerationMethods && 
+                        m.supportedGenerationMethods.includes('generateContent')
+                    );
+
+                    const flashModel = validModels.find(m => m.name.includes('flash'));
+                    if (flashModel) {
+                        selectedModel = flashModel.name.replace('models/', '');
+                    } else if (validModels.length > 0) {
+                        selectedModel = validModels[0].name.replace('models/', '');
+                    }
+                }
+
+                if (!selectedModel) {
+                    selectedModel = 'gemini-2.5-flash';
+                }
+
+                btnText.innerText = `使用 ${selectedModel} 解析週表中...`;
+
+                // 第二步：發送圖片進行分析
                 const base64Data = currentBase64Image.split(',')[1];
                 const promptText = `Extract VTuber stream schedule from the image into a JSON array. 
 Fields required for each item:
@@ -267,53 +299,29 @@ Fields required for each item:
 - "time": Start time in "HH:MM" 24-hour format
 - "title": Stream title or description`;
 
-                const candidateModels = [
-                    'gemini-2.5-flash',
-                    'gemini-2.0-flash',
-                    'gemini-1.5-flash'
-                ];
-
-                let responseData = null;
-                let lastError = null;
-
-                for (let modelName of candidateModels) {
-                    try {
-                        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
-                        const response = await fetch(url, {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({
-                                contents: [{
-                                    parts: [
-                                        { text: promptText },
-                                        { inline_data: { mime_type: currentMimeType, data: base64Data } }
-                                    ]
-                                }],
-                                generationConfig: {
-                                    response_mime_type: "application/json"
-                                }
-                            })
-                        });
-
-                        const resJson = await response.json();
-                        if (response.ok && resJson.candidates && resJson.candidates[0].content) {
-                            responseData = resJson;
-                            break;
-                        } else {
-                            lastError = resJson.error?.message || `HTTP status ${response.status}`;
+                const generateUrl = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${apiKey}`;
+                const response = await fetch(generateUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{
+                            parts: [
+                                { text: promptText },
+                                { inline_data: { mime_type: currentMimeType, data: base64Data } }
+                            ]
+                        }],
+                        generationConfig: {
+                            response_mime_type: "application/json"
                         }
-                    } catch (e) {
-                        lastError = e.message;
-                    }
+                    })
+                });
+
+                const resJson = await response.json();
+                if (!response.ok) {
+                    throw new Error(resJson.error?.message || `HTTP 錯誤：${response.status}`);
                 }
 
-                if (!responseData) {
-                    throw new Error(lastError || '無法連線至 Gemini API，請確認 API Key 是否正確');
-                }
-
-                const rawText = responseData.candidates[0].content.parts[0].text;
+                const rawText = resJson.candidates[0].content.parts[0].text;
                 const parsedEvents = JSON.parse(rawText);
 
                 if (Array.isArray(parsedEvents) && parsedEvents.length > 0) {
@@ -331,14 +339,14 @@ Fields required for each item:
                     });
 
                     saveAndRender();
-                    alert(`🎉 成功由圖片辨識並匯入 ${parsedEvents.length} 筆直播行程！`);
+                    alert(`🎉 成功使用 ${selectedModel} 辨識並匯入 ${parsedEvents.length} 筆直播行程！`);
                 } else {
                     alert('AI 完成辨識，但在圖片中未找到明確的直播行程。');
                 }
 
             } catch (err) {
                 console.error('API Error Details:', err);
-                alert(`辨識失敗！原因：${err.message}\n請確認金鑰是否正確，或換一張清晰的週表圖片。`);
+                alert(`辨識失敗！原因：${err.message}`);
             } finally {
                 btnText.innerText = '開始 AI 辨識週表';
                 toggleModal('uploadModal');
