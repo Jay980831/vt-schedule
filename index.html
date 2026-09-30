@@ -254,41 +254,39 @@ async function processAIUpload() {
             }
 
             const btnText = document.getElementById('btnText');
-            btnText.innerText = '尋找可用模型中...';
+            btnText.innerText = '確認可用模型中...';
 
             try {
-                // 第一步：先向 Google 查詢該 API Key 支援的所有模型名稱
-                const listModelsUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
-                const listRes = await fetch(listModelsUrl);
-                const listData = await listRes.json();
+                // 預設使用官方最新的 gemini-3.8-flash
+                let selectedModel = 'gemini-3.8-flash';
 
-                if (!listRes.ok) {
-                    throw new Error(listData.error?.message || 'API Key 驗證失敗，請確認 Key 是否正確！');
-                }
-
-                // 篩選支援 generateContent 的模型，優先尋找 flash 系列
-                let selectedModel = '';
-                if (listData.models && listData.models.length > 0) {
-                    const validModels = listData.models.filter(m => 
-                        m.supportedGenerationMethods && 
-                        m.supportedGenerationMethods.includes('generateContent')
-                    );
-
-                    const flashModel = validModels.find(m => m.name.includes('flash'));
-                    if (flashModel) {
-                        selectedModel = flashModel.name.replace('models/', '');
-                    } else if (validModels.length > 0) {
-                        selectedModel = validModels[0].name.replace('models/', '');
+                // 嘗試動態取得目前 API Key 支援的最佳模型
+                try {
+                    const listModelsUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
+                    const listRes = await fetch(listModelsUrl);
+                    if (listRes.ok) {
+                        const listData = await listRes.json();
+                        if (listData.models && listData.models.length > 0) {
+                            const validModels = listData.models.filter(m => 
+                                m.supportedGenerationMethods && 
+                                m.supportedGenerationMethods.includes('generateContent')
+                            );
+                            // 優先挑選名稱含有 flash 的模型，若有 3.8 則優先選擇
+                            const flashModel = validModels.find(m => m.name.includes('3.8') || m.name.includes('flash'));
+                            if (flashModel) {
+                                selectedModel = flashModel.name.replace('models/', '');
+                            } else if (validModels.length > 0) {
+                                selectedModel = validModels[0].name.replace('models/', '');
+                            }
+                        }
                     }
+                } catch (e) {
+                    console.warn('動態獲取模型清單失敗，將直接使用預設模型:', e);
                 }
 
-                if (!selectedModel) {
-                    selectedModel = 'gemini-2.5-flash';
-                }
+                btnText.innerText = `使用 ${selectedModel} 分析週表中...`;
 
-                btnText.innerText = `使用 ${selectedModel} 解析週表中...`;
-
-                // 第二步：發送圖片進行分析
+                // 發送週表圖片進行 AI 辨識
                 const base64Data = currentBase64Image.split(',')[1];
                 const promptText = `Extract VTuber stream schedule from the image into a JSON array. 
 Fields required for each item:
@@ -318,7 +316,7 @@ Fields required for each item:
 
                 const resJson = await response.json();
                 if (!response.ok) {
-                    throw new Error(resJson.error?.message || `HTTP 錯誤：${response.status}`);
+                    throw new Error(resJson.error?.message || `HTTP 錯誤碼：${response.status}`);
                 }
 
                 const rawText = resJson.candidates[0].content.parts[0].text;
@@ -341,11 +339,11 @@ Fields required for each item:
                     saveAndRender();
                     alert(`🎉 成功使用 ${selectedModel} 辨識並匯入 ${parsedEvents.length} 筆直播行程！`);
                 } else {
-                    alert('AI 完成辨識，但在圖片中未找到明確的直播行程。');
+                    alert('AI 已讀取圖片，但未能找到明確的節目行程資訊。');
                 }
 
             } catch (err) {
-                console.error('API Error Details:', err);
+                console.error('API 錯誤細節:', err);
                 alert(`辨識失敗！原因：${err.message}`);
             } finally {
                 btnText.innerText = '開始 AI 辨識週表';
