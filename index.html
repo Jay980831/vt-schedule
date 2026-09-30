@@ -259,7 +259,7 @@
 
             try {
                 // 1. 動態取得您 API Key 支援的所有模型清單
-                let selectedModel = 'gemini-2.5-flash'; // 預設備用模型
+                let selectedModel = 'gemini-3.8-flash'; // 預設備用模型
                 try {
                     const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
                     const listRes = await fetch(listUrl);
