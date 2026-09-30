@@ -63,9 +63,9 @@
                     <i data-lucide="calendar" class="w-4 h-4 text-pink-400"></i>
                     <input type="month" id="monthPicker" value="2026-09" onchange="renderTimeline()" class="bg-slate-800 border border-slate-700 rounded-md px-2 py-1 text-xs text-slate-200 focus:outline-none">
                 </div>
-                <button onclick="loadSampleData()" class="text-xs text-pink-400 hover:underline flex items-center space-x-1">
-                    <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
-                    <span>載入測試資料</span>
+                <button onclick="clearAllData()" class="text-xs text-red-400 hover:underline flex items-center space-x-1">
+                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                    <span>清除目前行程</span>
                 </button>
             </div>
         </section>
@@ -111,14 +111,14 @@
 
             <div class="space-y-2">
                 <label class="text-xs text-slate-400">Gemini API Key (貼上 API 金鑰):</label>
-                <input type="password" id="apiKey" placeholder="貼上 API Key..." class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 focus:outline-none focus:border-pink-500">
+                <input type="password" id="apiKey" placeholder="貼上您的 API Key..." class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 focus:outline-none focus:border-pink-500">
             </div>
 
             <div class="flex justify-end space-x-2 pt-2">
                 <button onclick="toggleModal('uploadModal')" class="px-4 py-2 text-xs rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300">取消</button>
                 <button id="processBtn" onclick="processAIUpload()" class="px-4 py-2 text-xs rounded-lg bg-pink-600 hover:bg-pink-500 font-semibold flex items-center space-x-1">
                     <i data-lucide="wand2" class="w-3.5 h-3.5"></i>
-                    <span id="btnText">開始辨識行程</span>
+                    <span id="btnText">開始 AI 辨識週表</span>
                 </button>
             </div>
         </div>
@@ -241,32 +241,6 @@
             document.getElementById('previewContainer').classList.add('hidden');
         }
 
-        // 動態獲取該 API Key 可用的模型列表
-        async function getAvailableModel(apiKey) {
-            try {
-                const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
-                const res = await fetch(listUrl, {
-                    headers: { 'x-goog-api-key': apiKey }
-                });
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data.models && data.models.length > 0) {
-                        // 找尋支援 generateContent 的 flash 或 vision 模型
-                        const suitableModel = data.models.find(m => 
-                            m.supportedGenerationMethods?.includes('generateContent') && 
-                            (m.name.includes('flash') || m.name.includes('pro'))
-                        );
-                        if (suitableModel) {
-                            return suitableModel.name.replace('models/', '');
-                        }
-                    }
-                }
-            } catch (e) {
-                console.warn('動態獲取模型清單失敗，改用預設列表:', e);
-            }
-            return null;
-        }
-
         async function processAIUpload() {
             if (!currentBase64Image) {
                 alert('請先選擇、貼上或拖曳上傳一張週表圖片！');
@@ -274,47 +248,35 @@
             }
 
             const apiKey = document.getElementById('apiKey').value.trim();
-            const btnText = document.getElementById('btnText');
-            btnText.innerText = 'AI 辨識中...';
-
             if (!apiKey) {
-                setTimeout(() => {
-                    events.push({
-                        id: Date.now(),
-                        name: '辨識結果-VTuber',
-                        group: '子午計畫',
-                        type: '歌枠',
-                        date: '2026-09-30',
-                        time: '21:00',
-                        title: '【辨識成功】上傳週表自動匯入之直播行程',
-                        link: '#'
-                    });
-                    saveAndRender();
-                    btnText.innerText = '開始辨識行程';
-                    toggleModal('uploadModal');
-                    clearImagePreview();
-                    alert('未輸入 Key，已載入預設測試行程。');
-                }, 800);
+                alert('請填寫 Gemini API Key 才能執行 AI 週表辨識！');
                 return;
             }
 
+            const btnText = document.getElementById('btnText');
+            btnText.innerText = 'AI 辨識分析中...';
+
             try {
                 const base64Data = currentBase64Image.split(',')[1];
-                const promptText = "Extract VTuber schedule from this image. Return JSON format array with objects: 'name', 'group' (default '箱外/個人勢'), 'type' ('歌枠','雜談','遊戲','重大發表','聯動'), 'date' (YYYY-MM-DD), 'time' (HH:MM), 'title'. Output ONLY JSON format.";
+                const promptText = `你是專業的 VTuber 節目表解析助手。請詳細分析這張圖片，讀取圖片中每一天的所有直播行程。
+請務必只輸出標準 JSON 陣列格式（不要包含任何 MarkDown 標籤或說明文字），範例格式如下：
+[
+  {
+    "name": "VTuber名字(若無則填寫圖片中的主角名字)",
+    "group": "子午計畫", 
+    "type": "歌枠/雜談/遊戲/重大發表/聯動",
+    "date": "2026-09-30",
+    "time": "21:00",
+    "title": "直播標題內容"
+  }
+]
+注意：日期格式務必為 YYYY-MM-DD（年份預設 2026），時間為 HH:MM（24小時制）。`;
 
-                // 優先候選模型列表
-                let candidateModels = [
+                const candidateModels = [
                     'gemini-2.5-flash',
                     'gemini-2.0-flash',
-                    'gemini-3.5-flash',
                     'gemini-1.5-flash-latest'
                 ];
-
-                // 先試著向 API 查詢該 Key 可以用的動態模型
-                const autoDiscoveredModel = await getAvailableModel(apiKey);
-                if (autoDiscoveredModel) {
-                    candidateModels.unshift(autoDiscoveredModel);
-                }
 
                 let data = null;
                 let lastErr = null;
@@ -339,7 +301,7 @@
                         });
 
                         const resJson = await response.json();
-                        if (response.ok && resJson.candidates) {
+                        if (response.ok && resJson.candidates && resJson.candidates[0].content) {
                             data = resJson;
                             break;
                         } else {
@@ -351,39 +313,53 @@
                 }
 
                 if (!data) {
-                    throw new Error(lastErr || '無法使用該 Key 連線至 Gemini API');
+                    throw new Error(lastErr || 'Gemini 連線失敗，請檢查 API Key！');
                 }
 
                 const rawText = data.candidates[0].content.parts[0].text;
+                // 強制擷取 JSON 陣列
                 const cleanJsonStr = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
-                const jsonMatch = cleanJsonStr.match(/\[.*\]/s);
+                const jsonMatch = cleanJsonStr.match(/\[[\s\S]*\]/);
 
                 if (jsonMatch) {
                     const parsedEvents = JSON.parse(jsonMatch[0]);
+                    if (parsedEvents.length === 0) {
+                        alert('AI 已讀取圖片，但未能在圖片中找到明確的節目行程資訊。');
+                        return;
+                    }
+
                     parsedEvents.forEach(e => {
                         events.push({
                             id: Date.now() + Math.random(),
                             name: e.name || 'VTuber',
-                            group: e.group || '箱外/個人勢',
+                            group: e.group || '子午計畫',
                             type: e.type || '雜談',
                             date: e.date || '2026-09-30',
                             time: e.time || '20:00',
-                            title: e.title || '直播節目',
+                            title: e.title || '節目直播',
                             link: '#'
                         });
                     });
+
                     saveAndRender();
-                    alert(`🎉 成功辨識並匯入 ${parsedEvents.length} 筆行程！`);
+                    alert(`🎉 成功由圖片辨識並匯入 ${parsedEvents.length} 筆直播行程！`);
                 } else {
-                    alert('辨識完成，但未能解析出結構資料，請再試一張圖片。');
+                    alert('AI 辨識完成，但未能解析出結構文字，請試著換一張清晰的週表圖片。');
                 }
             } catch (err) {
                 console.error(err);
-                alert(`API 解析失敗！錯誤原因：${err.message}\n請確認 API Key 是否完整黏貼！`);
+                alert(`辨識失敗！錯誤訊息：${err.message}`);
             } finally {
-                btnText.innerText = '開始辨識行程';
+                btnText.innerText = '開始 AI 辨識週表';
                 toggleModal('uploadModal');
                 clearImagePreview();
+            }
+        }
+
+        function clearAllData() {
+            if (confirm('確定要清空目前所有的直播行程嗎？')) {
+                events = [];
+                saveAndRender();
             }
         }
 
@@ -391,8 +367,7 @@
             events = [
                 { id: 1, name: '稀有礦物', group: '子午計畫', type: '歌枠', date: '2026-09-28', time: '20:00', title: '【歌枠】週初開唱歌線狂歡！', link: '#' },
                 { id: 2, name: '汐Seki', group: '子午計畫', type: '雜談', date: '2026-09-28', time: '22:00', title: '【雜談】關於最近的重大企劃...', link: '#' },
-                { id: 3, name: '響Hibiki', group: '子午計畫', type: '遊戲', date: '2026-09-29', time: '21:00', title: '【Minecraft】新服建設大作戰', link: '#' },
-                { id: 4, name: '個人勢 VTuber', group: '箱外/個人勢', type: '重大發表', date: '2026-10-01', time: '19:30', title: '【重大發表】新衣裝公開預告！', link: '#' }
+                { id: 3, name: '響Hibiki', group: '子午計畫', type: '遊戲', date: '2026-09-29', time: '21:00', title: '【Minecraft】新服建設大作戰', link: '#' }
             ];
             saveAndRender();
         }
