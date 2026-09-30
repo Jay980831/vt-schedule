@@ -255,19 +255,46 @@
             }
 
             const btnText = document.getElementById('btnText');
-            btnText.innerText = 'AI 辨識分析中...';
+            btnText.innerText = '尋找可用模型中...';
 
             try {
-                // 使用 Google 官方標準 Gemini Flash 模型
-                const selectedModel = 'gemini-1.5-flash';
+                // 1. 動態取得您 API Key 支援的所有模型清單
+                let selectedModel = 'gemini-2.5-flash'; // 預設備用模型
+                try {
+                    const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
+                    const listRes = await fetch(listUrl);
+                    if (listRes.ok) {
+                        const listData = await listRes.json();
+                        if (listData.models && listData.models.length > 0) {
+                            // 篩選出支援 generateContent 的模型
+                            const available = listData.models.filter(m => 
+                                m.supportedGenerationMethods && 
+                                m.supportedGenerationMethods.includes('generateContent')
+                            );
+                            
+                            // 優先尋找名稱有 flash 的模型 (例如 gemini-2.5-flash, gemini-3.8-flash, gemini-2.0-flash)
+                            const flashModel = available.find(m => m.name.toLowerCase().includes('flash'));
+                            if (flashModel) {
+                                selectedModel = flashModel.name.replace('models/', '');
+                            } else if (available.length > 0) {
+                                selectedModel = available[0].name.replace('models/', '');
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.warn('無法動態取得模型清單，使用預設模型', e);
+                }
+
+                btnText.innerText = `使用 ${selectedModel} 分析中...`;
+
+                // 2. 發送圖片辨識請求
                 const base64Data = currentBase64Image.split(',')[1];
-                
                 const promptText = `Extract VTuber stream schedule from the image into a JSON array. 
 Fields required for each item:
 - "name": Name of the VTuber
 - "group": Group name, default to "子午計畫" or "箱外/個人勢"
 - "type": Choose one from ("歌枠", "雜談", "遊戲", "重大發表", "聯動")
-- "date": Date in "YYYY-MM-DD" format
+- "date": Date in "YYYY-MM-DD" format (assume year 2026 if not specified)
 - "time": Start time in "HH:MM" 24-hour format
 - "title": Stream title or description`;
 
@@ -322,7 +349,7 @@ Fields required for each item:
                     });
 
                     saveAndRender();
-                    alert(`🎉 成功辨識並匯入 ${parsedEvents.length} 筆直播行程！`);
+                    alert(`🎉 成功使用 ${selectedModel} 辨識並匯入 ${parsedEvents.length} 筆直播行程！`);
                 } else {
                     alert('AI 已讀取圖片，但未能找到明確的節目行程資訊。');
                 }
@@ -336,7 +363,6 @@ Fields required for each item:
                 clearImagePreview();
             }
         }
-
         function clearAllData() {
             if (confirm('確定要清空目前所有的直播行程嗎？')) {
                 events = [];
